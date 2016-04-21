@@ -1,0 +1,326 @@
+-------------------------------------------------------------------
+RDD
+------------------------------------------------------------------=
+val cmadlog = sc.textFile("/root/sparkdata/cmad.log")
+val log4error = cmadlog.filter {_.split(" ")(1) == "log4cxx:"}
+val uppererror = cmadlog.map {_.trim.toUpperCase()}
+val errorCount = log4error.count()
+log4error.saveAsTextFile("/root/sparkdata/log4errorincmad.log")
+uppererror.saveAsTextFile("/root/sparkdata/upppercmad.log")
+val lengths = logs.map{line => line.size}
+
+val maxLen = lengths.reduce{ (a, b) => if (a > b) a else b }
+-----------------------------------------------------------------
+val rpdlog = sc.textFile("/root/sparkdata/rpd.log")
+
+val rpdpurge = rpdlog.filter (_.size > 0)
+
+
+def date(log: String): String = {
+    val columns = log.split("-")
+    columns(0)
+  }
+
+def time(log: String): String = {
+    val columns = log.split(" ")
+    columns(1)
+  }
+
+val tuplelog= rpdpurge.map { log => (date(log), time(log), log.size)}
+tuplelog.saveAsTextFile("/root/sparkdata/tuplerpd.log")
+
+
+-------------------------------------------------------------------
+SQL
+------------------------------------------------------------------=
+
+
+import org.apache.spark.sql._
+import sqlContext.implicits._
+
+val row1 = Row("Barack Obama", "President", "United States")
+val row2 = Row("David Cameron", "Prime Minister", "United Kingdom")
+
+val presidentName = row1.getString(0)
+val country = row1.getString(2)
+*************************************************************************
+
+case class Employee(id:Int, username: String, firstname: String, lastname: String)
+
+val rowsRDD = sc.textFile("/root/sparkdata/csvtest/users.csv")
+val employeesRDD = rowsRDD.filter{_.length>0}.map{row => row.split(",")}.map{cols => if (cols(0) == "# user id") Employee(0, cols(1), cols(2), cols(3)) else Employee(cols(0).trim.toInt, cols(1), cols(2), cols(3))}
+val employeesRDD = rowsRDD.filter{_.length>0}.map{row => row.split(",")}.map{cols => Employee(0, cols(1), cols(2), cols(3)) }
+val employeesDF = employeesRDD.toDF()
+val result = employeesDF.sql ()
+userDF.registerTempTable("user")
+
+**********************************************************************
+val linesRDD = sc.textFile("path/to/employees.csv")
+val rowsRDD = linesRDD.map{row => row.split(",")}
+                      .map{cols => Row(cols(0), cols(1).trim.toInt, cols(2))}
+val schema = StructType(List(
+                 StructField("name", StringType, false),
+                 StructField("age", IntegerType, false),
+                 StructField("gender", StringType, false)
+               )
+             )
+
+val employeesDF = sqlContext.createDataFrame(rowsRDD,schema)
+
+**************************************************************************
+case class SalesSummary(date: String, product: String, country: String, revenue: Double)
+val sales = List(SalesSummary("01/01/2015", "iPhone", "USA", 40000),
+                 SalesSummary("01/02/2015", "iPhone", "USA", 30000),
+                 SalesSummary("01/01/2015", "iPhone", "China", 10000),
+                 SalesSummary("01/02/2015", "iPhone", "China", 5000),
+                 SalesSummary("01/01/2015", "S6", "USA", 20000),
+                 SalesSummary("01/02/2015", "S6", "USA", 10000),
+                 SalesSummary("01/01/2015", "S6", "China", 9000),
+                 SalesSummary("01/02/2015", "S6", "China", 6000))
+
+val salesDF = sc.parallelize(sales).toDF()
+
+val salesCubeDF = salesDF.cube($"date", $"product", $"country").sum("revenue")
+
+salesCubeDF.filter("product IS null AND date IS null AND country='USA'").show
+
+*****************************************************************************************************
+
+val lines = sc.textFile("/root/sparkdata/iris/iris.data")
+lines.persist()
+
+val nonEmpty = lines.filter(_.nonEmpty)
+val parsed = nonEmpty map {_.split(",")}
+val distinctSpecies = parsed.map{a => a(4)}.distinct.collect
+val textToNumeric = distinctSpecies.zipWithIndex.toMap
+
+
+import org.apache.spark.mllib.regression.LabeledPoint
+import org.apache.spark.mllib.linalg.{Vector, Vectors}
+
+val labeledPoints = parsed.map{a =>
+             LabeledPoint(textToNumeric(a(4)),
+               Vectors.dense(a(0).toDouble, a(1).toDouble, a(2).toDouble, a(3).toDouble))}
+
+val dataSplits = labeledPoints.randomSplit(Array(0.8, 0.2))
+val trainingData = dataSplits(0)
+val testData = dataSplits(1)
+
+
+import org.apache.spark.mllib.classification.NaiveBayes
+val model = NaiveBayes.train(trainingData)
+
+val predictionsAndLabels = testData.map{d => (model.predict(d.features), d.label)}
+
+import org.apache.spark.mllib.evaluation.MulticlassMetrics
+val metrics = new MulticlassMetrics(predictionsAndLabels)
+
+val recall = metrics.recall
+
+
+**********************************************************************************************************************
+ML
+
+**********************************************************************************************************************
+val lines = sc.textFile("/root/sparkdata/mltest/imdb_labelled.txt")
+lines.persist()
+val columns = lines.map{_.split("\\t")}
+
+import sqlContext.implicits._
+case class Review(text: String, label: Double)
+val reviews = columns.map{a => Review(a(0),a(1).toDouble)}.toDF()
+
+reviews.printSchema
+
+reviews.groupBy("label").count.show
+
+val Array(trainingData, testData) = reviews.randomSplit(Array(0.8, 0.2))
+trainingData.count
+testData.count
+
+import org.apache.spark.ml.feature.Tokenizer
+val tokenizer = new Tokenizer()
+                      .setInputCol("text")
+                      .setOutputCol("words")
+
+
+val tokenizedData = tokenizer.transform(trainingData)
+
+import org.apache.spark.ml.feature.HashingTF
+val hashingTF = new HashingTF()
+                      .setNumFeatures(1000)
+                      .setInputCol(tokenizer.getOutputCol)
+                      .setOutputCol("features")
+
+val hashedData = hashingTF.transform(tokenizedData)
+
+import org.apache.spark.ml.classification.LogisticRegression
+val lr = new LogisticRegression()
+               .setMaxIter(10)
+               .setRegParam(0.01)
+
+import org.apache.spark.ml.Pipeline
+val pipeline = new Pipeline()
+                     .setStages(Array(tokenizer, hashingTF, lr))
+
+val pipeLineModel = pipeline.fit(trainingData)
+
+val testPredictions = pipeLineModel.transform(testData)
+
+
+val trainingPredictions = pipeLineModel.transform(trainingData)
+
+import org.apache.spark.ml.evaluation.BinaryClassificationEvaluator
+val evaluator = new BinaryClassificationEvaluator()
+
+import org.apache.spark.ml.param.ParamMap
+val evaluatorParamMap = ParamMap(evaluator.metricName -> "areaUnderROC")
+
+val aucTraining = evaluator.evaluate(trainingPredictions, evaluatorParamMap)
+
+val aucTest = evaluator.evaluate(testPredictions, evaluatorParamMap)
+
+import org.apache.spark.ml.tuning.ParamGridBuilder
+val paramGrid = new ParamGridBuilder()
+  .addGrid(hashingTF.numFeatures, Array(10000, 100000))
+  .addGrid(lr.regParam, Array(0.01, 0.1, 1.0))
+  .addGrid(lr.maxIter, Array(20, 30))
+  .build()
+
+
+import org.apache.spark.ml.tuning.CrossValidator
+val crossValidator = new CrossValidator()
+                           .setEstimator(pipeline)
+                           .setEstimatorParamMaps(paramGrid)
+                           .setNumFolds(10)
+                           .setEvaluator(evaluator)
+
+val crossValidatorModel = crossValidator.fit(trainingData)
+
+val newPredictions = crossValidatorModel.transform(testData)
+
+val newAucTest = evaluator.evaluate(newPredictions, evaluatorParamMap)
+
+
+
+**********************************************************************************************************************
+Graph
+
+**********************************************************************************************************************
+
+import org.apache.spark.graphx._
+
+case class User(name: String, age: Int)
+
+val users = List((1L, User("Alex", 26)), (2L, User("Bill", 42)), (3L, User("Carol", 18)),
+                 (4L, User("Dave", 16)), (5L, User("Eve", 45)), (6L, User("Farell", 30)),
+                 (7L, User("Garry", 32)), (8L, User("Harry", 36)), (9L, User("Ivan", 28)),
+                 (10L, User("Jill", 48))
+              )
+
+val usersRDD = sc.parallelize(users)
+
+val follows = List(Edge(1L, 2L, 1), Edge(2L, 3L, 1), Edge(3L, 1L, 1), Edge(3L, 4L, 1),
+                   Edge(3L, 5L, 1), Edge(4L, 5L, 1), Edge(6L, 5L, 1), Edge(7L, 6L, 1),
+                   Edge(6L, 8L, 1), Edge(7L, 8L, 1), Edge(7L, 9L, 1), Edge(9L, 8L, 1),
+                   Edge(8L, 10L, 1), Edge(10L, 9L, 1), Edge(1L, 11L, 1)
+                  )
+
+val followsRDD =  sc.parallelize(follows)
+
+val defaultUser = User("NA", 0)
+
+val socialGraph = Graph(usersRDD, followsRDD, defaultUser)
+
+val numEdges = socialGraph.numEdges
+
+val numVertices = socialGraph.numVertices
+
+val inDegrees = socialGraph.inDegrees
+
+val outDegrees = socialGraph.outDegrees
+
+val degrees = socialGraph.degrees
+
+val vertices = socialGraph.vertices
+val edges = socialGraph.edges
+val triplets = socialGraph.triplets
+triplets.take(3)
+
+val follows = triplets.map{ t => t.srcAttr.name + " follows " + t.dstAttr.name}
+
+val updatedAges = socialGraph.mapVertices( (vertexId, user) =>
+                    User(user.name, user.age + 1 ))
+
+socialGraph.vertices.take(5)
+
+updatedAges.vertices.take(5)
+
+
+**********************************************************************************************************************
+Graph - pregel 
+
+**********************************************************************************************************************
+
+val outDegrees = socialGraph.outDegrees
+
+val outDegreesGraph = socialGraph.outerJoinVertices(outDegrees) {
+                         (vId, vData, OptOutDegree) =>
+                              OptOutDegree.getOrElse(0)
+                      }
+
+val weightedEdgesGraph = outDegreesGraph.mapTriplets{EdgeTriplet =>
+                                            1.0 / EdgeTriplet.srcAttr
+                                         }
+
+val inputGraph = weightedEdgesGraph.mapVertices((id, vData) => 1.0)
+
+
+val firstMessage = 0.0
+
+val iterations = 20
+
+val edgeDirection = EdgeDirection.Out
+
+val updateVertex = (vId: Long, vData: Double, msgSum: Double) => 0.15 + 0.85 * msgSum
+
+val sendMsg = (triplet: EdgeTriplet[Double, Double]) =>
+                   Iterator((triplet.dstId, triplet.srcAttr * triplet.attr))
+
+val aggregateMsgs = (x: Double, y: Double ) => x + y
+
+val influenceGraph = inputGraph.pregel(firstMessage, iterations, edgeDirection)(updateVertex,
+                                        sendMsg, aggregateMsgs)
+
+val userNames = socialGraph.mapVertices{(vId, vData) => vData.name}.vertices
+
+val userNamesAndRanks = influenceGraph.outerJoinVertices(userNames) {
+                             (vId, rank, optUserName) =>
+                                          (optUserName.get, rank)
+                             }.vertices
+
+userNamesAndRanks.collect.foreach{ case(vId, vData) =>
+                             println(vData._1 +"'s influence rank: " + vData._2)
+                           }
+
+userNamesAndRanks.collect.foreach{ case(vId, vData) =>
+                             println("No: " + vId+ " Name: "+ vData._1 +"'s influence rank: " + vData._2)
+                           }
+
+**********************************************************************************************************************
+Graph - high level methods
+
+**********************************************************************************************************************
+
+val dynamicRanksGraph = inputGraph.pageRank(0.001)
+
+
+val staticRanksGraph = inputGraph.staticPageRank(20)
+
+val connectedComponentsGraph = inputGraph.connectedComponents()
+
+val sccGraph = inputGraph.stronglyConnectedComponents(20)
+
+
+
+
