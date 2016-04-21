@@ -330,3 +330,5 @@ This is a second commit to git, and I removed one * line
 This is the third commit from Master
 
 This is to test the sync to github
+
+This is a line from b1 branch for conflicts
