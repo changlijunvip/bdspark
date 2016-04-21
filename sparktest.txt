@@ -331,4 +331,7 @@ This is the third commit from Master
 
 This is to test the sync to github
 
+This is a line from b1 branch for conflicts
+
 conflict line added from master
+
